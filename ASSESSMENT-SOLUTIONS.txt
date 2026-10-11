@@ -1,331 +1,316 @@
-SENIOR DEVSECOPS TAKE-HOME ASSESSMENT
-Submission answers and artifact map
+Senior DevSecOps Take-Home Assessment
+Submission notes and answers
 
-REPOSITORY
+Repository
 https://github.com/SathyaDatla/accounts-api-security
 
-The repository is the source for the code, policy, IaC, CI configuration, and
-Markdown deliverables listed below. Verify anonymous access in an incognito
-window before submitting the link. The configuration uses illustrative AWS
-account and GitHub repository identities; replace those before real use.
+The repository contains the implementation, policies, infrastructure examples,
+CI workflows, and the supporting documents listed below. Please open the link
+in an incognito window before submitting it so you can confirm that anonymous
+reviewers can access it. The AWS account numbers and GitHub identities in the
+examples are placeholders; they need to be replaced before a real rollout.
 
-ASSUMPTIONS
-1. The accounts workload runs in the accounts namespace on a shared EKS cluster
-   in ap-south-1. RDS is private and the application uses a separate database
-   login rather than the RDS master credential.
-2. The pod uses IRSA for AWS access. External Secrets Operator (ESO) retrieves
-   runtime secrets from AWS Secrets Manager. The API does not need Kubernetes
-   API access.
-3. Cilium is the cluster network policy engine. The exact KYC hostname, stream
-   broker names, account IDs, subnet IDs, KMS key, and security groups must be
-   replaced with approved environment values.
+How I approached the scenario
 
-PART 1 - BUILD AND REVIEWER ENTRY POINT
-Upload README.md. From PowerShell at the repository root, install Python 3 and
-Conftest and run:
+I assumed accounts-api runs in the accounts namespace of a shared EKS cluster
+in ap-south-1. RDS is private, and the application uses its own database login
+rather than the RDS master credential. The pod uses IRSA, and External Secrets
+Operator retrieves runtime values from AWS Secrets Manager. The application
+does not need access to the Kubernetes API. I used Cilium for workload network
+policy. The KYC hostname, stream broker names, AWS account, subnet IDs, KMS key,
+and security groups are examples that would need environment-specific values.
+
+Part 1: Build and reviewer entry point
+
+Upload README.md. It explains the local checks and the optional Terraform and
+kind workflows. To run the policy checks, install Python 3 and Conftest, open
+PowerShell in the repository root, and run:
 
   Set-ExecutionPolicy -Scope Process Bypass
   .\setup-lab.ps1
 
-The script runs good and bad Rego fixtures and checks the waiver file. If the
-Kyverno CLI is installed, it also runs the admission policy tests. Optional
-Terraform checks are:
+The script checks both passing and intentionally failing Rego fixtures, then
+checks the waiver register. If Kyverno is installed, the script runs its
+admission tests as well. For Terraform, run:
 
   terraform -chdir=infra/terraform init -backend=false -input=false
   terraform -chdir=infra/terraform validate
 
-No AWS credentials are needed for these local checks. Do not run terraform
-apply. An optional kind cluster can be created with
-`.\setup-lab.ps1 -CreateKindCluster`; this creates a cluster only and does not
-deploy the workload.
+These checks do not need AWS credentials. I would not run terraform apply for
+this exercise. The optional `-CreateKindCluster` switch creates a local cluster
+and checks connectivity; it does not deploy the example workload.
 
-SECTION 1 - THREAT MODEL
-Upload docs/threat-model.md. It includes the trust-boundary Mermaid diagram and
-the ranking below.
+Section 1: Threat model
 
-1. API code execution: a public request exploits the API or a dependency. The
-   attacker can access data and credentials available to the process and may
-   attempt a cluster pivot. Controls: non-root, no host access, narrow IAM,
-   restricted egress, and a workload-specific shell execution alert. An RCE
-   can still read data the API is authorized to handle.
-2. Release workflow or maintainer compromise: an attacker changes source or
-   CI and attempts to publish an unauthorized image or assume the AWS role.
-   Controls: reviewed changes, protected production environment, scoped OIDC,
-   immutable ECR tags, signed image, and SBOM attestation.
-3. Secret or customer-data leakage: a compromised process, debug path, or
-   exception exposes credentials or PII. Controls: Secrets Manager delivery,
-   a narrow pod role, credential rotation, and redaction before log
-   serialization. Process memory remains exposed to process compromise.
-4. Pivot from another shared-cluster workload: an attacker uses host resources,
-   Kubernetes credentials, or open network paths. Controls: no host namespaces
-   or hostPath, no API token mount or RBAC grant, and default-deny egress. A
-   Kubernetes namespace is not a hard isolation boundary.
-5. Database exposure or weak incident evidence: a public DB rule exposes
-   records, or incomplete audit trails prevent reconstruction. Controls:
-   private encrypted RDS, app-security-group-only ingress, backups, and
-   validated multi-region CloudTrail with retained logs.
+Upload docs/threat-model.md. It contains the trust-boundary diagram and the
+full threat model. My five highest-priority risks are:
 
-Overrated for the initial security budget: blocking every low-severity
-dependency alert. Reachability and impact matter. Critical and high findings
-block; lower findings are triaged with an owner and due date.
+1. Code execution in the API. An attacker could reach the service through a
+   vulnerable endpoint or dependency, then access data and credentials the
+   process is allowed to use or try to pivot within the shared cluster. I
+   reduced the pivot paths with a non-root workload, no host access, narrow
+   IAM, restricted egress, and a Falco rule for unexpected shell execution.
+   An attacker can still read data the API legitimately handles.
+2. A compromised maintainer or release workflow. An attacker may try to
+   change source or CI and publish an unauthorized image. Reviewed changes, a
+   protected production environment, scoped OIDC, immutable ECR tags, image
+   signing, and an SBOM attestation make that path harder and more visible.
+3. A secret or customer-data leak. Process compromise, debug output, or an
+   exception could expose a credential or PII. Secrets Manager delivery, a
+   narrow pod role, rotation, and redaction before log serialization reduce
+   that risk. They cannot protect a secret already read into compromised
+   process memory.
+4. A pivot from another workload in the shared cluster. An attacker may try
+   to use host resources, Kubernetes credentials, or open network paths. The
+   workload has no host namespaces or hostPath mounts, no mounted API token or
+   RBAC grant, and default-deny egress. I still treat a namespace as a useful
+   boundary, not as hard isolation.
+5. Database exposure or missing incident evidence. A public database rule
+   could expose account records, while incomplete audit records make an
+   incident difficult to reconstruct. The example keeps RDS private and
+   encrypted, restricts ingress to the app security group, enables backups,
+   and stores validated multi-region CloudTrail logs with retention controls.
 
-SECTION 2 - BUILD AND RELEASE INTEGRITY
-Upload:
-  .github/workflows/release.yml
-  infra/iam/github-oidc-trust.json
+I would not spend the first week blocking every low-severity dependency alert.
+Reachability and likely impact matter. Critical and high findings block; lower
+severity findings need an owner and a due date while the team tunes its signal.
 
-The release workflow authenticates to AWS using GitHub Actions OIDC, builds an
-image tagged with the commit SHA, creates an SPDX SBOM and publishes it as a
-Cosign OCI attestation, scans the image, signs it keylessly, and verifies the
-signature and attestation. The ECR repository has image_tag_mutability set to
-IMMUTABLE, preventing a published commit tag from being overwritten.
+Section 2: Build and release integrity
 
-The trust policy scopes the token subject to
-repo:bank/accounts-api:environment:production and the audience to
-sts.amazonaws.com. This denies other repositories, refs, and environments from
-assuming this role. Replace the illustrative repository and AWS account values
-with the actual production identities before deployment.
+Upload .github/workflows/release.yml and
+infra/iam/github-oidc-trust.json.
 
-Keyless signing is chosen to avoid a long-lived private signing key; trust is
-rooted in the GitHub OIDC identity and Sigstore certificate transparency and
-verification roots. The signature binds an image digest to an authorized
-workflow identity. It does not prove that the source is safe, that the workflow
-was uncompromised, or that a human reviewed every line.
+The release workflow uses GitHub Actions OIDC to assume the AWS release role.
+It tags the image with the commit SHA, creates an SPDX SBOM, publishes the SBOM
+as a Cosign OCI attestation, scans the image, signs it keylessly, and verifies
+the signature and attestation. The ECR repository is configured with immutable
+tags, so a published commit tag cannot be overwritten.
 
-SECTION 3 - PIPELINE GATES AND WAIVERS
-Upload:
-  .github/workflows/security-gates.yml
-  waivers/waivers.json
-  scripts/check_waivers.py
-  waivers/README.md
-  docs/break-glass.md
+The trust policy requires the token audience to be sts.amazonaws.com and the
+subject to be repo:bank/accounts-api:environment:production. That scope denies
+other repositories, refs, and environments from assuming this role. The
+identity is illustrative and must be changed to the real repository and
+production environment before use.
 
-Tool choices and rationale:
-  - Trivy: one tool scans dependencies and images; it does not provide
-    reachability analysis.
-  - Semgrep: CI ruleset for static analysis and high-confidence source issues.
-  - Gitleaks: scans the full checkout history; checkout uses fetch-depth: 0.
-  - Checkov: broad Terraform coverage; Rego adds the specific invariants and
-    regression fixtures for this design.
+I chose keyless signing to avoid maintaining a long-lived private signing key.
+The trust roots are the GitHub OIDC identity and Sigstore's certificate
+transparency and verification roots. The signature ties an image digest to an
+authorized workflow identity; it does not prove the source is safe, the
+workflow was uncompromised, or a reviewer understood every line of code.
 
-Merge thresholds:
-  - Block on leaked secrets, critical/high dependency or image findings,
-    expired/malformed waivers, failed policy fixtures, and failed required IaC
-    checks.
-  - Block high-confidence Semgrep findings. Keep medium/low dependency issues
-    as warnings with an owner and due date until a month of triage shows a
-    tolerable false-positive rate.
-  - Tune narrow noisy rules first and require suppressions to cite an approved
-    waiver. Aim to keep reviewed false positives below five percent before
-    promoting additional warning classes to blocking gates.
+Section 3: Pipeline gates and the waiver path
 
-Waivers are stored in waivers/waivers.json. Each needs a finding ID, rationale,
-compensating control, owner, approver, tracking issue, created time, and UTC
-expiry. Normal waivers last no more than 30 days; break-glass waivers last no
-more than four hours. scripts/check_waivers.py fails CI for missing fields,
-invalid timestamps, excessive duration, or an expired waiver. For real GitHub
-enforcement, require verified signed commits, two approvals, platform
-CODEOWNERS approval, no self-approval, and no admin bypass. These GitHub
-settings are external to the repository and must be configured and verified.
+Upload .github/workflows/security-gates.yml, waivers/waivers.json,
+scripts/check_waivers.py, waivers/README.md, and docs/break-glass.md.
 
-Break-glass: for a production-down incident, the incident commander opens an
-incident record; the platform on-call engineer and service owner approve the
-smallest exception. Keep production environment review, OIDC, image signature,
-and audit logging enabled. Use a short-lived role session tagged with the
-incident ID and deploy an immutable digest. Record the waiver and approvals,
-export GitHub audit events and CloudTrail to the security account, remove the
-waiver after recovery, rotate possibly exposed credentials, and review on the
-next business day.
+I use Trivy for dependency and image scanning because one tool keeps the
+pipeline manageable, though it does not provide reachability analysis. Semgrep
+provides static analysis. Gitleaks scans the complete checkout history; the
+workflow fetches full history with `fetch-depth: 0`. Checkov provides broad
+Terraform coverage, while the Rego policies capture the specific invariants I
+want these fixtures to protect.
 
-SECTION 4 - REVIEW AND REMEDIATE
-Upload the following files for the corresponding deliverables.
+On day one, leaked secrets, critical or high vulnerability findings, invalid
+or expired waivers, failed policy fixtures, and failed required IaC checks
+block a merge. High-confidence Semgrep findings block too. Medium and low
+dependency findings warn and get an owner and due date. I would review the
+first month of results and tune narrow noisy rules first; I would promote
+additional warning classes only when the false-positive rate is low enough
+that engineers still trust the gate. My target is fewer than five percent
+reviewed false positives before promotion.
 
-4A. Workload and RBAC:
-  Fixed workload: k8s/base/deployment.yaml
-  Service account / RBAC: k8s/base/rbac.yaml
-  Rego policy: policy/rego/kubernetes.rego
-  Negative fixtures: k8s/fixtures/bad-deployment.yaml and bad-role.yaml
-  Admission tests: k8s/kyverno/kyverno-test.yaml
+Waivers live in waivers/waivers.json. Each record needs a finding ID, a reason,
+a compensating control, an owner, an approver, a tracking issue, and UTC
+creation and expiry times. The checker fails on missing fields, bad timestamps,
+excessive duration, or expiry. A normal waiver can last at most 30 days; a
+break-glass waiver can last at most four hours. In GitHub, I would require a
+verified signed commit, two approvals, platform CODEOWNERS review, no
+self-approval, and no admin bypass for changes to the waiver file. Those are
+organization settings and cannot be enforced by this repository alone.
 
-Exploitability ranking and fixes:
-  1. hostNetwork, hostPath Docker socket, and host logs let an API exploit
-     reach node resources and increase cross-workload impact. Remove all host
-     access; run non-root with seccomp, dropped capabilities, no privilege
-     escalation, and a read-only root filesystem.
-  2. UID 0 increases the impact of process compromise. Run as UID/GID 10001.
-  3. The wildcard Role can read and alter Secrets, Pods, and ConfigMaps. The
-     API needs no Kubernetes API access; omit Role and RoleBinding and disable
-     service-account token mounting.
-  4. A mutable :latest image obscures image identity. Pin the workload image by
-     sha256 digest and enforce digest references in policy.
+For a production-down incident, the incident commander opens an incident
+record. The platform on-call engineer and service owner approve only the
+smallest required exception. The production environment review, OIDC, image
+signature, and audit logging stay enabled. The release uses a short-lived role
+session tagged with the incident ID and an immutable image digest. The waiver,
+approvals, GitHub audit events, and CloudTrail records go into the incident
+trail and the security account. After recovery, remove the waiver, rotate any
+possibly exposed credentials, and review the incident on the next business day.
 
-4B. Terraform and IaC policy:
-  Fixed Terraform: infra/terraform/main.tf, variables.tf, and outputs.tf
-  Rego policy: policy/rego/terraform.rego
-  Fixtures: infra/terraform/fixtures/good-db.yaml and bad-db.yaml
+Section 4: Review and remediate
 
-Exploitability ranking and fixes:
-  1. Public PostgreSQL and 0.0.0.0/0 ingress expose account data to direct
-     attack. Make RDS private and allow TCP/5432 only from the application
-     security group.
-  2. Disabled storage encryption exposes data in lost media/snapshots. Encrypt
-     with a customer-managed KMS key.
-  3. No backups and skipped final snapshot weaken recovery. Enable 14-day
-     backups, deletion protection, Multi-AZ, and a final snapshot.
-  4. Single-region CloudTrail without log validation/global events leaves
-     investigation gaps. Enable organization, multi-region logging, global
-     events and validation; store logs encrypted, versioned, blocked from
-     public access, and object-locked for 365 days in compliance mode.
-
-4C. Pod IAM:
-  Upload infra/iam/accounts-api-role-policy.json and infra/iam/DENIES.md.
-  It permits reads of the named runtime secret and kms:Decrypt only for the
-  named key through Secrets Manager with a matching secret encryption context.
-  It denies the broad AWS actions that the original NotAction allow would have
-  granted if its empty Resource were effectively "*".
-
-SECTION 5 - ADMISSION, RUNTIME, AND EGRESS
-Upload:
-  k8s/kyverno/policies.yaml
-  k8s/kyverno/kyverno-test.yaml
+For the workload and RBAC deliverable, upload:
+  k8s/base/deployment.yaml
+  k8s/base/rbac.yaml
+  policy/rego/kubernetes.rego
   k8s/fixtures/bad-deployment.yaml
-  runtime/falco/accounts-api.yaml
-  k8s/base/network-policy.yaml
-  docs/runtime.md
+  k8s/fixtures/bad-role.yaml
+  k8s/kyverno/kyverno-test.yaml
 
-Admission starts in Audit on the shared cluster. Scope observation to the
-accounts namespace. Promote that namespace to Enforce after 14 consecutive
-days with no unexplained violations, service-owner signoff, an exception
-inventory, and a canary plus rollback rehearsal. Do not block unrelated teams
-retroactively.
+I ranked host access first because hostNetwork, the Docker socket, and host
+logs can turn an API exploit into a node-level or cross-workload incident. The
+fixed Deployment removes those mounts and host namespaces, runs as UID/GID
+10001, uses RuntimeDefault seccomp, drops all capabilities, prevents privilege
+escalation, and has a read-only root filesystem. The mutable `:latest` image
+is replaced by a sha256 digest. The service has no Kubernetes API use case, so
+there is no Role or RoleBinding and its service-account token is not mounted.
+The Rego rules and negative fixtures keep the important defects from silently
+returning.
 
-The custom Falco rule detects a shell or common network utility spawned in the
-accounts-api container. Send alerts through Falcosidekick to the central
-security event bus and page the platform on-call engineer and service owner.
-Include time, cluster, namespace, pod, container, image, process, parent, user,
-and node; omit command arguments because they can contain secrets.
+For Terraform and its policy, upload:
+  infra/terraform/main.tf
+  infra/terraform/variables.tf
+  infra/terraform/outputs.tf
+  policy/rego/terraform.rego
+  infra/terraform/fixtures/good-db.yaml
+  infra/terraform/fixtures/bad-db.yaml
 
-First three responder actions:
-  1. Preserve pod, node, EKS audit, flow, and process evidence; record the image
-     digest and relevant request IDs.
-  2. With the incident commander, isolate egress and replace pods only after
-     evidence is preserved.
-  3. Revoke/rotate database and KYC credentials; check CloudTrail, RDS, and
-     audit records for access.
+The most urgent Terraform issue is public PostgreSQL access, especially with
+0.0.0.0/0 ingress. The fixed configuration makes RDS private and permits port
+5432 only from the application security group. It enables KMS encryption,
+14-day backups, deletion protection, Multi-AZ, and a final snapshot. The
+CloudTrail example is an organization trail across regions, validates log
+files, includes global service events, and writes to a versioned, encrypted,
+public-access-blocked bucket with 365-day compliance-mode object lock.
 
-Cilium permits ingress from the ingress namespace and egress only to the KYC
-provider on TLS/443, the private DB on 5432, and private stream brokers on
-9094; DNS rules are restricted to those names and default-deny blocks the rest.
-This does not prevent abuse of an allowed host, a shared CDN address, or DNS
-tunnelling through permitted DNS. The policy requires Cilium DNS proxy/FQDN
-policy and real environment hostnames.
+For the pod IAM deliverable, upload infra/iam/accounts-api-role-policy.json and
+infra/iam/DENIES.md. The policy permits reads of only the named Secrets Manager
+secret and KMS decryption only through Secrets Manager for that secret's
+encryption context. It denies the broad AWS actions the original NotAction
+allow could have permitted if the empty Resource had effectively been `*`.
 
-SECTION 6 - SECRETS AND DATA PROTECTION
-Upload:
-  k8s/base/secret-store.yaml
-  docs/rotation.md
-  docs/log-redaction.md
-  docs/encryption.md
+Section 5: Admission, runtime, and egress
 
-Credential delivery: AWS Secrets Manager is the source of truth, encrypted by
-a customer-managed KMS key. ESO uses a narrowly scoped IRSA service account to
-write a namespaced Kubernetes Secret mounted read-only by the pod. The repo
-contains secret names and property references, not secret values. RDS manages
-its master password; the application uses a separate DB login.
+Upload k8s/kyverno/policies.yaml, k8s/kyverno/kyverno-test.yaml,
+k8s/fixtures/bad-deployment.yaml, runtime/falco/accounts-api.yaml,
+k8s/base/network-policy.yaml, and docs/runtime.md.
 
-Rotation targets:
-  - Application DB login: routine rotation every 30 days; revoke an exposed
-    value within five minutes and move all consumers to the replacement within
-    15 minutes of incident declaration.
-  - KYC API key: routine rotation every 90 days; same five-minute revocation
-    and 15-minute consumer replacement incident targets.
-  - IRSA credentials: no static key to rotate; restrict/detach the role and
-    terminate affected pods immediately on suspected role abuse. STS sessions
-    are temporary; verify actual session duration and revocation controls in
-    the production account.
-  - RDS master credential: managed by RDS, separate from the application
-    credential, and not mounted in the application pod.
+I would start Kyverno in Audit for the shared cluster and scope the initial
+review to accounts. I would promote accounts-api to Enforce after 14
+consecutive days without unexplained violations, service-owner signoff, an
+exception inventory, and a canary plus rollback rehearsal. That gives the
+platform team evidence before a policy can disrupt the other teams.
 
-For routine DB/KYC rotation, create a replacement, publish the current secret
-version, refresh the mounted Secret, roll the pods, confirm new connections,
-then revoke the old value. In an incident, revoke immediately, force refresh
-and rollout, verify the old credential is no longer used, and investigate
-prior use. Rotation cannot undo a credential already copied by an attacker.
+The custom Falco rule looks for a shell or common network utility starting in
+the accounts-api container, where a normal Go HTTP service should not need
+one. Falcosidekick sends the event to the central security event bus, and the
+platform on-call engineer and service owner are paged. The alert carries the
+time, cluster, namespace, pod, container, image, process, parent, user, and
+node; I leave command arguments out because they could contain secrets.
 
-Redact before log serialization: authorization/cookie headers, tokens,
-passwords, connection strings, names, email, phone, IBAN/account numbers,
-card PAN/CVV, KYC payloads, and request/response bodies. Use an allowlist of
-request ID, route template, status, latency bucket, version, and pseudonymous
-actor ID; apply the same rule to ingress logs. Timing, route, status, response
-size, and correlation remain visible. New fields, exception messages, traces,
-heap dumps, and provider-side logs can bypass this layer. The scenario only
-includes last-four card data; do not store full PAN/CVV and do not log last-four.
+The first response is to preserve pod, node, EKS audit, flow, and process
+evidence and record the image digest and request IDs. With the incident
+commander, the responder then isolates egress and replaces pods only after
+preserving evidence. Finally, they revoke or rotate the database and KYC
+credentials and review CloudTrail, RDS, and audit records for access.
 
-Encryption statement: RDS, ECR, Secrets Manager, and CloudTrail use
-customer-managed KMS keys controlled by the platform account; client, database,
-and provider links use TLS. This mitigates lost media and snapshot exposure,
-not access by an authorized compromised process or overly broad KMS principal.
+Cilium allows the KYC provider on TLS port 443, the private database on 5432,
+and private stream brokers on 9094. DNS is allowed only for those names, and
+the namespace default-deny policy blocks the rest. This depends on Cilium's
+DNS proxy/FQDN policy and real environment hostnames. It cannot prevent misuse
+of an allowed endpoint, all traffic behind a shared CDN address, or DNS
+tunnelling through permitted DNS.
 
-SECTION 7 - DECISIONS AND TRADE-OFFS
-Upload docs/decisions.md. Its core arguments are:
+Section 6: Secrets and data protection
 
-Three decisions to defend:
-  1. Publish once, use immutable commit tags and deploy by digest; sign and
-     attest the image. This improves provenance but does not establish code
-     safety or reviewer intent.
-  2. Enforce pod escape-path controls for accounts-api, but stage admission
-     rollout from Audit to Enforce after evidence and rollback rehearsal. This
-     reduces shared-cluster disruption while leaving a temporary window for
-     violations.
-  3. Use Cilium name-based egress for KYC and required private services. This
-     is more reliable than hand-maintained provider IPs but still allows abuse
-     of an approved hostname and DNS tunnelling risks.
+Upload k8s/base/secret-store.yaml, docs/rotation.md,
+docs/log-redaction.md, and docs/encryption.md.
 
-Day-one enforcement: full-history secret scanning, expired waiver checks,
+AWS Secrets Manager is the source of truth and uses a customer-managed KMS
+key. External Secrets Operator uses a narrowly scoped IRSA service account to
+write a namespaced Kubernetes Secret, which the pod mounts read-only. The
+repository holds secret names and property references, never credential
+values. RDS manages its master password; the application uses a separate,
+least-privilege database login.
+
+I would rotate the application database login every 30 days and the KYC key
+every 90 days. For an incident, the target is to revoke an exposed value
+within five minutes and move all consumers to a replacement within 15 minutes
+of declaring the incident. IRSA has no static key to rotate; on suspected role
+abuse, restrict the role and terminate affected pods immediately, then verify
+session duration and revocation behavior in the production account. The RDS
+master credential is managed separately and is never mounted in the app pod.
+For routine rotation, publish the new value, refresh the mounted Secret, roll
+the pods, confirm new connections, and only then revoke the old value. Rotation
+cannot undo a credential that an attacker has already copied.
+
+I would redact authorization and cookie headers, tokens, passwords, connection
+strings, names, email, phone, IBAN/account numbers, card PAN/CVV, KYC payloads,
+and request and response bodies before serializing application logs. I would
+use an allowlist for request ID, route template, status, latency bucket,
+service version, and pseudonymous actor ID, and apply the same policy to
+ingress logs. Timing, route, status, response size, and correlation still
+leak. New fields, exception messages, traces, heap dumps, or provider logs can
+bypass this layer. The scenario only includes last-four card data; I would not
+store full PAN/CVV or log last-four.
+
+For encryption, RDS, ECR, Secrets Manager, and CloudTrail use customer-managed
+KMS keys controlled by the platform account, and client, database, and
+provider connections use TLS. This helps with lost media and snapshots, but it
+does not protect plaintext from an authorized compromised process or an overly
+broad KMS principal.
+
+Part 2: Decisions and trade-offs
+
+Upload docs/decisions.md. I would defend three decisions in particular. First,
+publish once, use immutable commit tags, and deploy by digest; signing and an
+SBOM improve provenance, but do not prove the code is safe. Second, make
+non-root execution, no host access, and digest-pinned images the workload
+baseline, while staging cluster-wide admission from Audit to Enforce. This
+avoids surprising other teams, at the cost of accepting a short period in
+which violations are reported rather than blocked. Third, use Cilium for
+name-based egress instead of maintaining KYC provider IP ranges by hand. That
+is easier to operate, but an attacker can still misuse an allowed hostname or
+abuse permitted DNS.
+
+On day one, full-history secret scanning, expired-waiver checks,
 critical/high vulnerability findings, high-confidence Semgrep findings,
-required IaC checks, and policy fixture failures block. Medium/low dependency
-findings warn with an owner and due date. Kyverno starts in Audit; promote after
-14 clean days, owner signoff, exception review, and rollback rehearsal.
+required IaC checks, and failed policy fixtures block. Medium and low
+dependency findings warn and receive an owner and due date. Kyverno begins in
+Audit; the evidence to promote it is 14 clean days, owner signoff, an exception
+inventory, and a rollback rehearsal.
 
-Blast radius - API RCE: attacker reaches data and credentials authorized to
-the service. Controls deny node Docker socket/host-log access, root execution,
-Kubernetes API permissions, broad AWS actions, and arbitrary egress. Evidence
-includes EKS audit, Cilium flow/DNS, Falco, CloudTrail, RDS, and ALB/WAF logs
-stored centrally. Evidence can go dark for in-memory reads or misuse that looks
-like an ordinary authorized API request.
+If an attacker gets RCE in the API, they can reach data and credentials the
+service is authorized to use. They should not get the node Docker socket, host
+logs, Kubernetes API permissions, broad AWS actions, or arbitrary egress.
+EKS audit, Cilium flows and DNS, Falco, CloudTrail, RDS, and ALB/WAF logs
+should help reconstruct activity when exported to central retention. We will
+not see every in-memory read, and valid API calls may look normal.
 
-Blast radius - maintainer/workflow compromise: attacker can try to alter
-source/workflow and publish an image. Protected reviews, required checks,
-production environment approval, scoped OIDC subject, immutable tags, and
-signature verification constrain the path. Evidence includes GitHub audit
-history, signed image/attestation, CloudTrail role session, and registry digest.
-If an environment approver or organization admin is also compromised, these
-checks lose force; GitHub audit export must be configured outside this repo.
+If a maintainer account and workflow are compromised, the attacker may change
+source or try to publish a malicious image. Required review, checks, the
+protected production environment, scoped OIDC, immutable tags, and signature
+verification constrain that path. GitHub audit history, the signed image and
+attestation, CloudTrail role sessions, and the registry digest provide
+evidence. If an environment approver or organization administrator is also
+compromised, these checks lose much of their value. GitHub audit export must
+be configured outside this repository.
 
-Detection gap: slow scraping through valid customer sessions may resemble
-normal traffic. Closing it requires per-customer behavior baselines, rate
-analysis, and a staffed response function; this is a product/operations cost,
-not a simple Falco rule.
+One gap I accept for this exercise is slow scraping through valid customer
+sessions. It may look like ordinary traffic. Closing it would require
+per-customer behavior baselines, rate analysis, and a staffed response
+function; that is a product and operations investment, not just another alert.
 
-Regulatory mapping:
-  Control                                      Obligation
-  EKS and RDS in ap-south-1 (assumption)       Data residency
-  Validated multi-region CloudTrail, locked    Audit integrity and retention
-  Encrypted RDS and retained backups           Confidentiality and recovery
-  Narrow pod IAM and reviewed expiring waivers Access review
-  No full PAN/CVV storage or logging           Cardholder-data scope
-  Named alert owner and incident runbook       Breach readiness
+The controls with the clearest regulatory value are:
+  - EKS and RDS in ap-south-1 (assumption): data residency.
+  - Validated multi-region CloudTrail with locked retention: audit integrity
+    and retention.
+  - Encrypted RDS and retained backups: confidentiality and recovery.
+  - Narrow pod IAM and reviewed, expiring waivers: access review.
+  - No full PAN/CVV storage or logging: cardholder-data scope.
+  - A named alert owner and responder runbook: breach readiness.
 
-What was cut: live cloud deployment, full business API, DAST, and
-organization-wide GuardDuty configuration. First Monday production action:
-canary admission and egress in the owned namespace, centralize the logs in the
-security account, and test the on-call path end-to-end.
+I cut live cloud deployment, a full business API, DAST, and organization-wide
+GuardDuty configuration. On Monday, I would canary admission and egress in
+the owned namespace, centralize the logs in the security account, and test the
+on-call path end-to-end.
 
-ADDITIONAL NOTES FOR REVIEWERS
-This is a local reference implementation, not evidence of a deployed AWS
-control. The service is a minimal health-only stand-in. Replace illustrative
-AWS account IDs, GitHub identities, hostnames, and network IDs before a real
-rollout. GitHub branch protection, CODEOWNERS enforcement, protected
-environment reviewers, signed-commit requirements, audit export, and admin
-bypass settings must be configured in the organization; repository files alone
-cannot enforce those controls.
+Additional notes for reviewers
+
+This is a local reference implementation, not evidence that controls have
+been deployed to AWS or enforced in a live cluster. The Go service is a small
+health-only stand-in. Before production, replace the illustrative AWS account
+IDs, GitHub identities, hostnames, and network IDs. Also configure and verify
+GitHub branch protection, CODEOWNERS enforcement, production environment
+reviewers, signed-commit requirements, audit export, and admin bypass rules;
+those controls cannot be created by repository files alone.
