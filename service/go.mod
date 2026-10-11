@@ -1,1 +1,3 @@
-module example.invalid/accounts-api\n\ngo 1.24\n
+module example.invalid/accounts-api
+
+go 1.24
