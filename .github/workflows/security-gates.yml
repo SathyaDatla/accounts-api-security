@@ -1,0 +1,46 @@
+name: security-gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/ci
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+      - uses: hashicorp/setup-terraform@v3
+      - name: Format and validate Terraform
+        run: |
+          terraform -chdir=infra/terraform init -backend=false -input=false
+          terraform -chdir=infra/terraform validate
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/terraform
+          quiet: true
+          soft_fail: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Install Conftest
+        run: go install github.com/open-policy-agent/conftest@v0.56.0
+      - name: Verify secure and rejected fixtures
+        run: python scripts/policy_smoke.py
+      - name: Check waiver structure and expiry
+        run: python scripts/check_waivers.py

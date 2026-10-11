@@ -1,0 +1,58 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: accounts-api-baseline-test
+policies:
+  - policies.yaml
+resources:
+  - ../fixtures/bad-deployment.yaml
+  - ../base/deployment.yaml
+results:
+  - policy: accounts-api-workload-baseline
+    rule: no-host-access
+    resources:
+      - accounts/bad-api
+    kind: Deployment
+    result: fail
+  - policy: accounts-api-workload-baseline
+    rule: no-hostpath
+    resources:
+      - accounts/bad-api
+    kind: Deployment
+    result: fail
+  - policy: accounts-api-workload-baseline
+    rule: require-nonroot-and-seccomp
+    resources:
+      - accounts/bad-api
+    kind: Deployment
+    result: fail
+  - policy: accounts-api-workload-baseline
+    rule: harden-containers
+    resources:
+      - accounts/bad-api
+    kind: Deployment
+    result: fail
+  - policy: accounts-api-workload-baseline
+    rule: require-digest-image
+    resources:
+      - accounts/bad-api
+    kind: Deployment
+    result: fail
+  - policy: accounts-api-workload-baseline
+    rule: no-host-access
+    resources:
+      - accounts/accounts-api
+    kind: Deployment
+    result: pass
+  - policy: accounts-api-workload-baseline
+    rule: no-hostpath
+    resources:
+      - accounts/accounts-api
+    kind: Deployment
+    result: pass
+  - policy: accounts-api-workload-baseline
+    rule: require-nonroot-and-seccomp
+    resources:
+      - accounts/accounts-api
+    kind: Deployment
+    result: pass

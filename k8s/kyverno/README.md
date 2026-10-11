@@ -1,0 +1,2 @@
+# Admission rollout
+The ClusterPolicy currently uses Audit. At first, bind observation to the accounts namespace only for owned workload changes, while other team namespaces remain audit. Promote to Enforce in accounts after 14 consecutive days with no unexplained violations, service owner signoff, exception inventory, canary and rollback rehearsal. Enforce on new/updated accounts-api workloads; do not retroactively block unrelated namespaces. Shared-cluster rollout is coordinated with platform owners.

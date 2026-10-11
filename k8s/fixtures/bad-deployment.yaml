@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-api
+  namespace: accounts
+spec:
+  selector:
+    matchLabels:
+      app: bad-api
+  template:
+    metadata:
+      labels:
+        app: bad-api
+    spec:
+      hostNetwork: true
+      serviceAccountName: accounts-api
+      containers:
+        - name: api
+          image: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/accounts-api:latest
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock

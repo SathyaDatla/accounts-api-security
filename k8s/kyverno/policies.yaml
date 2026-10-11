@@ -1,0 +1,93 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: accounts-api-workload-baseline
+  annotations:
+    policies.kyverno.io/title: Accounts API workload baseline
+    policies.kyverno.io/category: T1 T4
+    policies.kyverno.io/description: Prevent host access, privilege escalation, mutable tags and root execution.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: no-host-access
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaces: [accounts]
+      validate:
+        message: Host namespaces and hostPath volumes are prohibited.
+        pattern:
+          spec:
+            template:
+              spec:
+                =(hostNetwork): false
+                =(hostPID): false
+                =(hostIPC): false
+    - name: no-hostpath
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaces: [accounts]
+      validate:
+        message: hostPath volumes are prohibited.
+        foreach:
+          - list: request.object.spec.template.spec.volumes[]
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.hostPath }}"
+                    operator: NotEquals
+                    value: null
+    - name: require-nonroot-and-seccomp
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaces: [accounts]
+      validate:
+        message: Pod must run non-root under RuntimeDefault seccomp.
+        pattern:
+          spec:
+            template:
+              spec:
+                securityContext:
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+    - name: harden-containers
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaces: [accounts]
+      validate:
+        message: Containers must drop capabilities, forbid privilege escalation and use read-only root.
+        foreach:
+          - list: request.object.spec.template.spec.containers
+            pattern:
+              securityContext:
+                privileged: false
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+    - name: require-digest-image
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaces: [accounts]
+      validate:
+        message: Production images must use a sha256 digest.
+        foreach:
+          - list: request.object.spec.template.spec.containers
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: NotMatch
+                    value: "*@sha256:*"

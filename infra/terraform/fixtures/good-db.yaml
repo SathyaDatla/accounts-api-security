@@ -1,0 +1,4 @@
+kind: Fixture
+database:
+  publicly_accessible: false
+  storage_encrypted: true

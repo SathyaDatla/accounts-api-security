@@ -1,0 +1,14 @@
+- rule: Accounts API unexpected shell execution
+  desc: Detect shell or common shell utility launched by the accounts-api workload (T1).
+  condition: >
+    spawned_process and container
+    and k8s.ns.name = "accounts"
+    and container.image.repository contains "accounts-api"
+    and (proc.name in (sh, bash, dash, ash, zsh, curl, wget, nc, ncat))
+  output: >
+    accounts-api shell/utility execution
+    (user=%user.name uid=%user.uid process=%proc.name parent=%proc.pname
+    pod=%k8s.pod.name namespace=%k8s.ns.name container=%container.name
+    image=%container.image.repository:%container.image.tag node=%host.name)
+  priority: CRITICAL
+  tags: [container, process, accounts-api, T1]

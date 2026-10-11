@@ -1,0 +1,5 @@
+*.tfstate*
+tfplan*
+.env
+*.pem
+*.key

@@ -1,0 +1,1 @@
+RDS, ECR, Secrets Manager, and CloudTrail logs use customer-managed KMS keys controlled by the platform account; client, database, and provider links use TLS. This helps against lost media or snapshots, but it does not protect data from an authorized compromised process or an overly broad KMS principal.

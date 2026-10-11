@@ -1,0 +1,1 @@
+The supplied original has an empty Resource and is not a valid shippable policy. If its broad NotAction was intended to use Resource * as a permissive wildcard, it allows nearly every AWS action other than deleting IAM roles/users. This policy denies all actions except reading the one database secret and decrypting it through Secrets Manager with the matching encryption context.

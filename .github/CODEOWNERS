@@ -1,0 +1,4 @@
+/waivers/ @bank/platform-team
+/.github/workflows/ @bank/platform-team
+/infra/ @bank/platform-team
+/k8s/policies/ @bank/platform-team

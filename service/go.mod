@@ -1,0 +1,1 @@
+module example.invalid/accounts-api\n\ngo 1.24\n

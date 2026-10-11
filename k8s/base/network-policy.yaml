@@ -1,0 +1,59 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: accounts
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: accounts-api-egress
+  namespace: accounts
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: accounts-api
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ingress-system
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "kyc.example.com"
+              - matchPattern: "accounts-prod.example.internal"
+              - matchPattern: "*.stream.accounts.internal"
+    - toFQDNs:
+        - matchName: kyc.example.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: accounts-prod.example.internal
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toFQDNs:
+        - matchPattern: "*.stream.accounts.internal"
+      toPorts:
+        - ports:
+            - port: "9094"
+              protocol: TCP
+  # No other egress rule: deny remainder. Requires Cilium DNS proxy/FQDN policy.

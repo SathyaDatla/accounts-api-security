@@ -1,0 +1,3 @@
+# Identity boundaries
+GitHub trust subject is repo:bank/accounts-api:environment:production, audience sts.amazonaws.com. It denies pull-request refs, tags, forks, other repositories and non-production environments from assuming the release role. Branch protection must require the security-gates workflow before main merges and the production environment must have platform reviewers.
+Release role policy grants ECR push only to accounts-api (GetAuthorizationToken requires Resource *). Pod runtime role and ESO IRSA role are separate. Replace placeholders with the real AWS account and EKS OIDC provider.
